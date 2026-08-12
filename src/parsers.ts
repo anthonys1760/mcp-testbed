@@ -30,19 +30,30 @@ export interface TestSummary {
 
 type Parser = (text: string) => Omit<TestSummary, 'passed'> | null;
 
-/** `node --test` summary block: `# pass 3`, `# fail 1`, `# tests 4`. */
+/**
+ * `node --test` summary block, in either of its two shapes. Piped output was
+ * TAP (`# tests 4`) up to Node 22; Node 23 made spec the default reporter even
+ * without a TTY, which prints `ℹ tests 4` instead. Same numbers, different
+ * sigil, so one parser handles both.
+ */
 const parseNodeTest: Parser = (text) => {
-  const tests = /^# tests (\d+)$/m.exec(text);
-  const pass = /^# pass (\d+)$/m.exec(text);
-  const fail = /^# fail (\d+)$/m.exec(text);
-  if (!tests || !pass || !fail) return null;
+  const count = (label: string): number | null => {
+    const match = new RegExp(`^[#ℹ] ${label} (\\d+)$`, 'm').exec(text);
+    return match ? Number(match[1]) : null;
+  };
 
+  const tests = count('tests');
+  const pass = count('pass');
+  const fail = count('fail');
+  if (tests === null || pass === null || fail === null) return null;
+
+  const tapFailures = collectTapFailures(text);
   return {
     reporter: 'node-test',
-    total: Number(tests[1]),
-    passedCount: Number(pass[1]),
-    failedCount: Number(fail[1]),
-    failures: collectTapFailures(text),
+    total: tests,
+    passedCount: pass,
+    failedCount: fail,
+    failures: tapFailures.length > 0 ? tapFailures : collectSpecFailures(text),
   };
 };
 
@@ -115,6 +126,22 @@ const parseMocha: Parser = (text) => {
  */
 function collectTapFailures(text: string): TestFailure[] {
   return [...text.matchAll(/^ {0,4}not ok \d+ - (.+?)(?:\s+#.*)?$/gm)].map((match) => ({
+    name: match[1].trim(),
+  }));
+}
+
+/**
+ * Pulls failure names out of the spec reporter's `✖ failing tests:` section.
+ *
+ * Only that trailing section is scanned, on purpose. In the main run flow a
+ * failing test's `✖` line appears once inline and once in this section, and a
+ * failing describe block gets a `✖` line of its own. Scanning the whole text
+ * would double count tests and misreport suites as tests.
+ */
+function collectSpecFailures(text: string): TestFailure[] {
+  const marker = text.indexOf('✖ failing tests:');
+  if (marker === -1) return [];
+  return [...text.slice(marker).matchAll(/^\s*✖ (.+?) \(\d+(?:\.\d+)?ms\)$/gmu)].map((match) => ({
     name: match[1].trim(),
   }));
 }
