@@ -14,7 +14,7 @@ create_workspace  ->  write_files  ->  run_tests  ->  read_workspace  ->  destro
 
 ```bash
 npm install
-npm test          # 48 tests
+npm test          # 50 tests
 npm run build
 ```
 
